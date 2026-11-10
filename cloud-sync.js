@@ -10,11 +10,22 @@ const message=(s)=>{const x=document.getElementById('subtitle');if(x)x.textConte
 const canonical=data=>JSON.parse(JSON.stringify(data));
 const publicSchedule=(d,id)=>{
  const loc=d.locations.find(l=>l.id===id);if(!loc)return null;
+ // Публикуем только имена и смены. Ставки, выплаты и закрытые данные не передаём.
+ // Ключи года/месяца позволяют хранить историю в ОДНОМ документе на каждый ПВЗ,
+ // поэтому существующие правила безопасности Firestore менять не нужно.
  const emps=d.employees.filter(e=>e.locations?.includes(id)).map(e=>({id:String(e.id),name:String(e.name)}));
  const shifts={};
- for(const e of emps)for(let day=1;day<=new Date(d.year,d.month+1,0).getDate();day++){
-  const key=[id,e.id,d.year,d.month,day].join('|');const amount=Number(d.shifts[key]||0);
-  if(amount===1||amount===0.5)shifts[e.id+'|'+day]=amount;
+ for(const e of emps){
+  const prefix=id+'|'+e.id+'|';
+  for(const [key,val] of Object.entries(d.shifts||{})){
+   if(!key.startsWith(prefix))continue;
+   const tail=key.slice(prefix.length).split('|');
+   if(tail.length!==3)continue;
+   const [y,m,day]=tail.map(Number);
+   const amount=Number(val);
+   if(!Number.isInteger(y)||y<2020||y>2100||!Number.isInteger(m)||m<0||m>11||!Number.isInteger(day)||day<1||day>new Date(y,m+1,0).getDate())continue;
+   if(amount===1||amount===0.5)shifts[y+'|'+m+'|'+e.id+'|'+day]=amount;
+  }
  }
  return {year:Number(d.year),month:Number(d.month),name:String(loc.name),employees:emps,shifts,updatedAt:serverTimestamp()};
 };
@@ -31,7 +42,7 @@ async function flush(){if(!ready||!queueData||writing)return;writing=true;const 
 }
 function queue(d){if(!ready)return;queueData=canonical(d);clearTimeout(writeTimer);writeTimer=setTimeout(flush,850);message('☁ Сохраняем изменения…');}
 async function uploadLocal(data){ready=true;queue(data);signal(true);}
-function markLoaded(data){ready=true;lastRemote=JSON.stringify(data);signal(true);}
+function markLoaded(data){ready=true;lastRemote=JSON.stringify(data);signal(true);queue(data);}
 async function login(){if(!usable){alert('Облачная конфигурация отсутствует. Открой настройка.html.');return;}
  const layer=document.createElement('div');layer.style.cssText='position:fixed;inset:0;background:#0007;z-index:1000;display:grid;place-items:center;padding:18px';
  layer.innerHTML='<form style="width:min(420px,100%);background:white;border-radius:17px;padding:25px;display:grid;gap:13px;box-shadow:0 20px 60px #0004"><h2>Вход управляющей</h2><label>Электронная почта<input type="email" required autocomplete="username" style="display:block;width:100%;margin-top:5px" name="mail"></label><label>Пароль<input type="password" required autocomplete="current-password" style="display:block;width:100%;margin-top:5px" name="pass"></label><div style="display:flex;gap:10px"><button class="primary" type="submit">Войти в облако</button><button type="button" id="cancelCloud">Отмена</button></div><small id="loginError" style="color:#a33"></small></form>';
